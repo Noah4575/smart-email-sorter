@@ -1,10 +1,10 @@
 import imaplib
 import email
 from email.header import decode_header
-from mcp.server.fastmcp import MCPServer
+from fastmcp import FastMCP
 import os
 
-mcp = MCPServer("Smart Email Sorter MCP (Real IMAP)")
+mcp = FastMCP("Smart Email Sorter MCP (Real IMAP)")
 
 # Configuration IMAP (à stocker dans un fichier .env plus tard)
 IMAP_SERVER = os.getenv("IMAP_SERVER", "imap.gmail.com")
