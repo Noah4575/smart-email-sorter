@@ -1,0 +1,6 @@
+langgraph
+langchain-ollama
+pydantic
+pypdf
+langchain-litellm
+fastmcp
