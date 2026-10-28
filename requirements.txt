@@ -4,3 +4,4 @@ pydantic
 pypdf
 langchain-litellm
 fastmcp
+langchain

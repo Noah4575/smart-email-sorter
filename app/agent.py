@@ -1,87 +1,70 @@
-import os
-from typing import Literal
-from langchain_core.messages import HumanMessage, SystemMessage
-from langgraph.graph import StateGraph, START, END
-from langgraph.graph.message import add_messages
-from typing_extensions import TypedDict
+from email.utils import parseaddr
 
-from app.config import get_llm
-from app.schemas import EmailClassification
-from app.mcp_server import fetch_unread_emails, apply_email_action
+from app.mcp_server import (
+    apply_email_label,
+    archive_email,
+    fetch_unread_emails,
+    mark_email_as_read,
+)
 
-# 1. Définition de l'état global du graphe
-class State(TypedDict):
-    messages: list
-    unread_emails: list
-    processed_count: int
+LABELS_BY_DOMAIN = {
+    "email.openai.com": "ChatGPT",
+    "instagram.com": "Instagram",
+    "twitch.tv": "Twitch",
+    "linkedin.com": "LinkedIn",
+    "google.com": "Google",
+}
 
-# 2. Initialisation du LLM via LiteLLM
-llm = get_llm(temperature=0.0)
-structured_llm = llm.with_structured_output(EmailClassification)
 
-# 3. Définition des Nœuds du Graphe
+def _label_for_sender(sender: str | None) -> str | None:
+    _, address = parseaddr(sender or "")
+    domain = address.rpartition("@")[2].lower().rstrip(".")
 
-def fetch_emails_node(state: State):
-    """Nœud 1 : Récupère les e-mails non lus."""
-    print("--- [AGENT] Récupération des e-mails non lus ---")
+    for known_domain, label in LABELS_BY_DOMAIN.items():
+        if domain == known_domain or domain.endswith(f".{known_domain}"):
+            return label
+    return None
+
+
+def _apply_action(action_name: str, action, email_id: str) -> bool:
+    try:
+        result = action(email_id)
+        print(f"  {action_name}: {result}")
+        return True
+    except Exception as error:
+        print(f"  ERREUR {action_name}: {error}")
+        return False
+
+
+def process_unread_emails() -> None:
     emails = fetch_unread_emails()
-    return {"unread_emails": emails, "processed_count": 0}
+    print(f"{len(emails)} e-mail(s) non lu(s) à traiter.")
 
-def process_emails_node(state: State):
-    """Nœud 2 : Analyse et traite chaque e-mail avec le LLM local."""
-    emails = state.get("unread_emails", [])
-    
-    if not emails:
-        print("--- [AGENT] Aucun e-mail à traiter. ---")
-        return {"messages": [HumanMessage(content="Aucun e-mail à traiter.")]}
+    for item in emails:
+        email_id = str(item["id"])
+        sender = item.get("sender")
+        label = _label_for_sender(sender)
+        print(f"\n[{email_id}] {sender or '(expéditeur inconnu)'} — {item.get('subject', '')}")
 
-    results = []
-    for email in emails:
-        print(f"\n--- Analyse de l'e-mail ID: {email['id']} de {email['sender']} ---")
-        
-        prompt = f"""
-        Analyse l'e-mail suivant :
-        - Expéditeur : {email['sender']}
-        - Sujet : {email['subject']}
-        - Corps : {email['body']}
-        """
-        
-        # Appel au LLM local (Ollama via LiteLLM) avec structure Pydantic
-        classification: EmailClassification = structured_llm.invoke(prompt)
-        
-        print(f"  -> Catégorie : {classification.category}")
-        print(f"  -> Résumé : {classification.summary}")
-        print(f"  -> Action recommandée : {classification.action} (Label: {classification.target_label})")
-        
-        # Exécution de l'action via l'outil
-        action_result = apply_email_action(
-            email_id=email['id'],
-            action=classification.action,
-            target_label=classification.target_label
-        )
-        print(f"  -> {action_result}")
-        results.append(action_result)
+        if label is None:
+            print("  Ignoré: domaine expéditeur non reconnu; e-mail laissé inchangé.")
+            continue
 
-    return {"messages": [HumanMessage(content=f"Traitement terminé pour {len(emails)} e-mails.")]}
+        print(f"  Catégorie déterministe: {label}")
+        try:
+            result = apply_email_label(email_id, label)
+            print(f"  Libellé: {result}")
+        except Exception as error:
+            print(f"  ERREUR application du libellé: {error}")
+            print("  E-mail conservé comme non lu et dans la boîte de réception.")
+            continue
 
-# 4. Construction du Graphe LangGraph
-workflow = StateGraph(State)
+        _apply_action("Marquage comme lu", mark_email_as_read, email_id)
+        _apply_action("Archivage", archive_email, email_id)
 
-# Ajout des nœuds
-workflow.add_node("fetch_emails", fetch_emails_node)
-workflow.add_node("process_emails", process_emails_node)
+    print("\nTraitement terminé.")
 
-# Définition du flux séquentiel
-workflow.add_edge(START, "fetch_emails")
-workflow.add_edge("fetch_emails", "process_emails")
-workflow.add_edge("process_emails", END)
-
-# Compilation de l'agent
-agent_app = workflow.compile()
 
 if __name__ == "__main__":
-    # Test d'exécution locale de l'agent
-    print("Lancement de l'agent Smart Email Sorter...")
-    initial_state = {"messages": [], "unread_emails": [], "processed_count": 0}
-    final_state = agent_app.invoke(initial_state)
-    print("\nExécution du graphe terminée avec succès !")
+    print("🚀 Lancement du tri Smart Email Sorter...")
+    process_unread_emails()
