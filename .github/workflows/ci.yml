@@ -30,4 +30,4 @@ jobs:
             # 4. Test de fumée (Smoke Test) / Vérification des imports et de la config
             - name: Run structural tests
               run: |
-                  python -c "import app.config; import app.schemas; import app.mcp_server; print('Tous les modules s\'importent et se configurent correctement !')"
+                  python -c "import app.config; import app.agent; import app.mcp_server; print('Tous les modules s\'importent et se configurent correctement !')"
